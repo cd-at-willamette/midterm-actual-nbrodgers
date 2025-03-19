@@ -1,13 +1,11 @@
 ---
 title: "Characterizing Automobiles"
-author: "Your Name Here"
-date: "03/17/2025"
+author: "Nicole Rodgers"
+date: "03/18/2025"
 
 format: 
-  html:  # You will quite likely want to change all but the last one, to taste
-    theme:
-        light: flatly
-        dark: darkly
+  html:
+    theme: minty
     mainfont: monospace
     highlight-style: github
     title-block-banner: true
@@ -25,7 +23,9 @@ sh(library(tidyverse))
 sh(library(caret))
 sh(library(fastDummies))
 sh(library(class))
-sh(library(ISLR)) # for the "Auto" dataframe
+sh(library(ISLR))
+sh(library(pROC))
+sh(library(moderndive))
 ```
 
 # Dataframe
@@ -48,10 +48,25 @@ names(Auto)
 - Compute and comment on the RMSE.
 
 ```{r regression}
-# Your code here
+m1 = lm(mpg ~ horsepower, Auto)
+m2 = lm(mpg ~ year, Auto)
+m3 = lm(mpg ~ horsepower + year, Auto)
+m4 = lm(mpg ~ horsepower * year, Auto)
+
+get_rmse <- function(m) {
+    pred <- predict(m, newdata = Auto)
+    sqrt(mean((Auto$mpg - pred)^2))
+}
+
+unlist(lapply(list(m1, m2, m3, m4), get_rmse))
+
+diff <- Auto %>%
+  summarise(difference = max(mpg) - min(mpg))
+diff*0.1
+
 ```
 
-> <span style="color:red;font-weight:bold">TODO</span>: *Explain*
+> <span style="color:red;font-weight:bold">TODO</span>: *The RMSEs for these features range between 6.3 and 3.9, with the lowest belonging to the interaction between the two. Even the lowest RMSE suggests a swing of more than 10% in values which is not ideal. The highest value is the model based on year. Knowing what we know about car performance, it makes sense that the horsepower would have more of an influence on mpg than year since horsepower is a standardized measure and year is not. We'd have to do a more in depth analysis to find out if there is actually a difference per year.*
 
 # Feature Engineering
 
@@ -61,10 +76,33 @@ names(Auto)
 - Compute and comment on the RMSE.
 
 ```{r features}
-# Your code here
+df_auto <- Auto %>%
+  select(mpg, name) %>%
+  mutate(chevy = as.numeric(str_detect(name, "chev"))) %>%
+  mutate(buick = as.numeric(str_detect(name, "buick"))) %>%
+  mutate(ford = as.numeric(str_detect(name, "ford"))) %>%
+  mutate(bmw = as.numeric(str_detect(name, "bmw"))) %>%
+  mutate(amc = as.numeric(str_detect(name, "amc"))) %>%
+  mutate(dodge = as.numeric(str_detect(name, "dodge"))) %>%
+  mutate(toyota = as.numeric(str_detect(name, "toyota"))) %>%
+  mutate(hyundai = as.numeric(str_detect(name, "hyundai"))) %>%
+  mutate(honda = as.numeric(str_detect(name, "honda"))) %>%
+  mutate(mazda = as.numeric(str_detect(name, "mazda"))) %>%
+  drop_na()
+
+m5 <- lm(mpg ~ ., Auto)
+m6 <- lm(mpg ~ ., df_auto)
+
+get_rmse_df <- function(m) {
+    pred <- predict(m, newdata = df_auto)
+    sqrt(mean((df_auto$mpg - pred)^2))
+}
+
+get_rmse(m5)
+get_rmse_df(m6)
 ```
 
-> <span style="color:red;font-weight:bold">TODO</span>: *Explain*
+> <span style="color:red;font-weight:bold">TODO</span>: *The RMSE of my model is about 0.3 higher than the original model, suggesting that my engineered features (Make names) are not as good at predicting mpg. It would seem that in this dataset, when you compare across a variety of models, each maker produces cars that are very similar to those of other makers.*
 
 # Classification
 
@@ -73,10 +111,34 @@ names(Auto)
 - Report on your Kappa value.
 
 ```{r classification}
-# Your code here
+auto <- Auto %>%
+  mutate(make =
+    case_when(
+      str_detect(name, "honda") ~ "honda",
+      str_detect(name, "chev") ~ "chevy",
+      .default = "other"
+    )
+  ) %>%
+  filter(make != "other")
+
+fit_knn <- train(make ~ .,
+             data = auto, 
+             method = "knn",
+             tuneLength = 5,
+             trControl = trainControl(method = "cv", number = 5))
+
+fit_nb <- train(make ~ .,
+             data = auto, 
+             method = "naive_bayes",
+             metric = "Kappa",
+             trControl = trainControl(method = "cv"))
+
+confusionMatrix(predict(fit_knn, auto),factor(auto$make))
+
+confusionMatrix(predict(fit_nb, auto),factor(auto$make))
 ```
 
-> <span style="color:red;font-weight:bold">TODO</span>: *Explain*
+> <span style="color:red;font-weight:bold">TODO</span>: *I've chosen a $K$-NN model because I decided to look at a binary selection between 'chevy' and 'honda'. Also, Naive Bayes assumes that the features are indendent of each other and I don't believe they are. We found earlier that at the very least, horsepower has an effect on mpg. In the end, the $K$-NN was more accurate (85%) and produced a higher kappa value (0.67). *
 
 # Binary Classification
 
@@ -85,34 +147,31 @@ names(Auto)
 - Display and comment on an ROC curve.
 
 ```{r binary classification}
-# Your code here
+auto2 <- Auto %>%
+  mutate(honda = as.numeric(str_detect(name, "honda")))
+
+auto2 %>%
+  group_by(honda) %>%
+  summarise(n = n())
+
+379/13
+
+auto2_wtd <- auto2 %>%
+  mutate(weight = ifelse(honda == 1, 29.15, 1)) %>%
+  mutate(honda = as.factor(honda))
+
+fit_knn_wtd <- train(honda ~ .,
+             data = auto2_wtd, 
+             method = "knn",
+             tuneLength = 5,
+             trControl = trainControl(method = "cv", number = 5))
+
+confusionMatrix(predict(fit_knn_wtd, auto2_wtd),factor(auto2_wtd$honda))
+
+prob <- predict(fit_knn_wtd, newdata = auto2_wtd, type = "prob")[,2]
+myRoc <- roc(auto2_wtd$honda, prob)
+plot(myRoc)
+auc(myRoc)
 ```
 
-> <span style="color:red;font-weight:bold">TODO</span>: *Explain*
-
-# Ethics
-
-- Based on your analysis, comment on the [Clean Air Act of 1970 and Ammendments of 1977](https://www.epa.gov/clean-air-act-overview/evolution-clean-air-act)
-- Discuss the civic reposibilities of data scientists for:
-    - Big Data and Human-Centered Computing
-    - Democratic Institutions
-    - Climate Change
-- Provide at least one statistical measure for each, such as a RMSE, Kappa value, or ROC curve.
-
-> <span style="color:red;font-weight:bold">TODO</span>: Big Data and Human-Centered Computing
-
-```{r big data}
-# Your code here
-```
-
-> <span style="color:red;font-weight:bold">TODO</span>: Democratic Institutions
-
-```{r democracy}
-# Your code here
-```
-
-> <span style="color:red;font-weight:bold">TODO</span>: Climate Change
-
-```{r climate}
-# Your code here
-```
+> <span style="color:red;font-weight:bold">TODO</span>: *With an AOC of 1, this model is nearly perfect, likely because of how heavily weighted it is. There are actually few hondas in the dataset, making the weight of 29.15 extremely high. It would be concerning if the model was inaccurate under these circumstances.*
